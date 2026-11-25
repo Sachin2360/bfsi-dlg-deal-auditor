@@ -83,6 +83,7 @@ async def draft_rbi_memo(deal: DlgDealInput, metrics: DlgCheckResult) -> str:
     request = ChatCompletionRequest(
         model=MEMO_MODEL,
         temperature=0.0,
+        top_p=1.0,
         messages=[
             SystemMessage(
                 content=(
@@ -115,6 +116,7 @@ async def audit_memo_faithfulness(
     request = ChatCompletionRequest(
         model=JUDGE_MODEL,
         temperature=0.0,
+        top_p=1.0,
         messages=[
             SystemMessage(
                 content=(
