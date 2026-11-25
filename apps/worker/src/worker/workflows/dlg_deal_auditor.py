@@ -3,8 +3,10 @@ from typing import Literal
 
 import mistralai.workflows as workflows
 from mistralai.workflows.plugins.mistralai import (
+    ChatAssistantWorkflowOutput,
     ChatCompletionRequest,
     SystemMessage,
+    TextOutput,
     UserMessage,
     chat_parse_to_model,
     mistralai_chat_complete,
@@ -141,23 +143,52 @@ async def audit_memo_faithfulness(
     return await chat_parse_to_model(FaithfulnessAudit, request)
 
 
+def _render_markdown(result: DlgAuditResult) -> str:
+    m = result.deal_metrics
+    a = result.faithfulness_audit
+    lines = [
+        f"# BFSI DLG Deal Audit — {m.deal_name}",
+        "",
+        f"- Disbursed pool: {m.disbursed_pool_crore} Cr | Proposed DLG: {m.proposed_dlg_crore} Cr",
+        f"- DLG %: **{m.dlg_pct:.2f}%** (RBI cap 5.00%, Q.1/Q.2) → cap breached: **{m.cap_breached}**",
+        f"- Channel: {m.channel_type} → prohibited channel: **{m.prohibited_channel}** (Q.7, Q.9/Q.10/Q.12)",
+        f"- DLG provider is RE: {m.provider_is_re} (Q.8 certification, Q.11 capital deduction)",
+        "",
+        "## Compliance memo (RBI DLG FAQ-cited)",
+        "",
+        result.compliance_memo,
+        "",
+        "## Faithfulness audit (LLM-as-a-judge)",
+        "",
+        f"- Score: **{a.faithfulness_score}/5** — verdict: **{a.judge_verdict}**",
+        f"- Supported claims: {len(a.supported_claims)} | Unsupported extrapolations: {len(a.unsupported_extrapolations)}",
+        "",
+        "Full structured result is in `structuredContent` (deal_metrics, compliance_memo, faithfulness_audit).",
+    ]
+    return "\n".join(lines)
+
+
 @workflows.workflow.define(
     name="bfsi-dlg-deal-auditor",
     workflow_display_name="BFSI DLG Deal Auditor",
     workflow_description=(
         "Audits a BFSI loan-pool deal against RBI DLG rules: computes the exact DLG percentage and "
         "channel checks, drafts an RBI FAQ-cited compliance memo with a Mistral model, and "
-        "LLM-judges the memo's faithfulness to the rules and math."
+        "LLM-judges the memo's faithfulness to the rules and math. Publishable to Vibe Work."
     ),
 )
 class BfsiDlgDealAuditorWorkflow:
     @workflows.workflow.entrypoint
-    async def run(self, input: DlgDealInput) -> DlgAuditResult:
+    async def run(self, input: DlgDealInput) -> ChatAssistantWorkflowOutput:
         metrics = await calculate_dlg_check(input)
         memo = await draft_rbi_memo(input, metrics)
         audit = await audit_memo_faithfulness(input, metrics, memo)
-        return DlgAuditResult(
+        result = DlgAuditResult(
             deal_metrics=metrics,
             compliance_memo=memo,
             faithfulness_audit=audit,
+        )
+        return ChatAssistantWorkflowOutput(
+            content=[TextOutput(text=_render_markdown(result))],
+            structuredContent=result.model_dump(mode="json"),
         )

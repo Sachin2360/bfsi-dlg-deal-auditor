@@ -111,13 +111,18 @@ async def test_workflow_default_inputs_with_mocked_llm(
         )
         result = await asyncio.wait_for(handle.result(), timeout=15)
 
-    metrics = result["deal_metrics"]
+    structured = result["structuredContent"]
+    metrics = structured["deal_metrics"]
     assert metrics["dlg_pct"] == 6.0
     assert metrics["cap_breached"] is True
     assert metrics["prohibited_channel"] is True
-    assert result["compliance_memo"] == FAKE_MEMO
-    audit = result["faithfulness_audit"]
+    assert structured["compliance_memo"] == FAKE_MEMO
+    audit = structured["faithfulness_audit"]
     assert audit["faithfulness_score"] == 5
     assert audit["judge_verdict"] == "PASS"
     assert audit["unsupported_extrapolations"] == []
     assert isinstance(FaithfulnessAudit(**audit), FaithfulnessAudit)
+    text = result["content"][0]["text"]
+    assert "6.00%" in text
+    assert FAKE_MEMO in text
+    assert "PASS" in text
