@@ -1,4 +1,5 @@
 import asyncio
+import json
 from datetime import timedelta
 
 import pytest
@@ -59,43 +60,50 @@ def test_dlg_check_under_cap() -> None:
 
 
 class _Message:
-    def __init__(self, content: str) -> None:
+    def __init__(self, content: object) -> None:
         self.content = content
 
 
 class _Choice:
-    def __init__(self, content: str) -> None:
+    def __init__(self, content: object) -> None:
         self.message = _Message(content)
 
 
 class _ChatResponse:
-    def __init__(self, content: str) -> None:
+    def __init__(self, content: object) -> None:
         self.choices = [_Choice(content)]
 
 
 FAKE_MEMO = "DECISION: REJECT. Q.1/Q.2 breached (6.0% > 5%); Q.7 prohibits NBFC-P2P; Q.11 capital deduction applies."
+FAKE_AUDIT = {
+    "faithfulness_score": 5,
+    "supported_claims": [
+        "Q.1/Q.2 breach at 6.0%",
+        "Q.7 NBFC-P2P prohibition",
+        "Q.11 RE capital deduction",
+    ],
+    "unsupported_extrapolations": [],
+    "judge_verdict": "PASS",
+}
 
 
 async def test_workflow_default_inputs_with_mocked_llm(
     temporal_env, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    async def fake_chat_complete(_request) -> _ChatResponse:
-        return _ChatResponse(FAKE_MEMO)
-
-    async def fake_parse_to_model(model_class, _request):
-        return model_class(
-            faithfulness_score=5,
-            supported_claims=[
-                "Q.1/Q.2 breach at 6.0%",
-                "Q.7 NBFC-P2P prohibition",
-                "Q.11 RE capital deduction",
-            ],
-            unsupported_extrapolations=[],
-            judge_verdict="PASS",
+    async def fake_chat_complete(request) -> _ChatResponse:
+        if getattr(request, "response_format", None):
+            return _ChatResponse(json.dumps(FAKE_AUDIT))
+        return _ChatResponse(
+            [
+                {
+                    "type": "thinking",
+                    "thinking": [{"type": "text", "text": "internal reasoning"}],
+                },
+                {"type": "text", "text": FAKE_MEMO},
+            ]
         )
 
     monkeypatch.setattr(mod, "mistralai_chat_complete", fake_chat_complete)
-    monkeypatch.setattr(mod, "chat_parse_to_model", fake_parse_to_model)
 
     async with create_test_worker(
         temporal_env,

@@ -8,7 +8,6 @@ from mistralai.workflows.plugins.mistralai import (
     SystemMessage,
     TextOutput,
     UserMessage,
-    chat_parse_to_model,
     mistralai_chat_complete,
 )
 from pydantic import BaseModel, Field
@@ -73,6 +72,28 @@ def _compute_dlg_check(deal: DlgDealInput) -> DlgCheckResult:
     )
 
 
+def _message_text(content: object) -> str:
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for chunk in content:
+            chunk_type = (
+                chunk.get("type")
+                if isinstance(chunk, dict)
+                else getattr(chunk, "type", None)
+            )
+            if chunk_type == "text":
+                text = (
+                    chunk.get("text", "")
+                    if isinstance(chunk, dict)
+                    else getattr(chunk, "text", "")
+                )
+                parts.append(text)
+        return "".join(parts)
+    return str(content)
+
+
 @workflows.activity(start_to_close_timeout=timedelta(seconds=60))
 async def calculate_dlg_check(deal: DlgDealInput) -> DlgCheckResult:
     return _compute_dlg_check(deal)
@@ -106,7 +127,7 @@ async def draft_rbi_memo(deal: DlgDealInput, metrics: DlgCheckResult) -> str:
         ],
     )
     response = await mistralai_chat_complete(request)
-    return response.choices[0].message.content
+    return _message_text(response.choices[0].message.content)
 
 
 @workflows.activity(start_to_close_timeout=timedelta(seconds=300))
@@ -117,6 +138,7 @@ async def audit_memo_faithfulness(
         model=JUDGE_MODEL,
         temperature=0.0,
         top_p=1.0,
+        response_format={"type": "json_object"},
         messages=[
             SystemMessage(
                 content=(
@@ -142,7 +164,14 @@ async def audit_memo_faithfulness(
             ),
         ],
     )
-    return await chat_parse_to_model(FaithfulnessAudit, request)
+    response = await mistralai_chat_complete(request)
+    text = _message_text(response.choices[0].message.content)
+    try:
+        return FaithfulnessAudit.model_validate_json(text)
+    except ValueError:
+        return FaithfulnessAudit.model_validate_json(
+            text[text.find("{") : text.rfind("}") + 1]
+        )
 
 
 def _render_markdown(result: DlgAuditResult) -> str:
